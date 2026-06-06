@@ -5,6 +5,7 @@
       <div class="nav-inner">
         <h1 class="logo">🎭 圆桌聊天</h1>
         <div class="nav-actions">
+          <button class="nav-btn" @click="goToHistory">📜 历史</button>
           <button class="nav-btn" @click="clearChat">清空</button>
           <button class="nav-btn" @click="goToCharacters">角色</button>
           <button class="nav-btn" @click="goToSettings">设置</button>
@@ -81,6 +82,7 @@ import { useCharacterStore } from '../stores/character.js'
 import { useChatDataStore } from '../stores/chatData.js'
 import { useChatUIStore } from '../stores/chatUI.js'
 import { useSettingsStore } from '../stores/settings.js'
+import { useSessionsStore } from '../stores/sessions.js'
 import { useChatOrchestrator } from '../composables/useChatOrchestrator.js'
 import { playSpeech, stopSpeech } from '../api/tts.js'
 import { themes } from '../utils/themes.js'
@@ -93,6 +95,7 @@ const characterStore = useCharacterStore()
 const chatData = useChatDataStore()
 const chatUI = useChatUIStore()
 const settingsStore = useSettingsStore()
+const sessionsStore = useSessionsStore()
 const orchestrator = useChatOrchestrator()
 
 const showCharacterDetail = ref(false)
@@ -103,9 +106,10 @@ const currentThemeValue = computed(() => settingsStore.settings.theme || 'dark')
 const currentTheme = computed(() => themes[currentThemeValue.value] || themes.dark)
 
 onMounted(async () => {
-  await characterStore.init()
-  await chatData.init()
   await settingsStore.init()
+  await characterStore.init()
+  await sessionsStore.init()
+  await chatData.init()
 })
 
 // 监听流式状态，创建临时消息
@@ -119,10 +123,12 @@ watch(() => chatUI.isStreaming, (streaming) => {
 
 function goToCharacters() { router.push('/characters') }
 function goToSettings() { router.push('/settings') }
+function goToHistory() { router.push('/history') }
 
-function clearChat() {
-  if (confirm('确定清空所有聊天记录？')) {
-    chatData.clearMessages()
+async function clearChat() {
+  if (confirm('确定开始新对话？当前对话将保存到历史记录。')) {
+    await sessionsStore.createSession()
+    await chatData.init()
   }
 }
 

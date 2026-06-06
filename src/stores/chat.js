@@ -11,7 +11,6 @@ export const useChatStore = defineStore('chat', () => {
   const dataStore = useChatDataStore()
   const uiStore = useChatUIStore()
 
-  // 代理所有属性
   const messages = computed(() => dataStore.messages)
   const loading = computed(() => dataStore.loading)
   const currentMode = computed(() => dataStore.currentMode)

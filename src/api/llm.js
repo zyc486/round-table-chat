@@ -1,29 +1,84 @@
 /**
  * LLM API 调用封装
  * 支持流式输出 (SSE) 和非流式
+ * 从设置读取 Base URL / Model / API Key
  */
 
 import { buildCharacterPrompt, buildModeratorPrompt, formatChatHistory } from '../utils/prompt.js'
+import { getSettings } from '../utils/db.js'
 
-const API_ENDPOINT = '/api/chat/completions'
-const API_KEY = 'tp-couiwpsntndobnzl7k9lj9bpci9w5s0mpobpa3jpxztllggz'
-const MODEL = 'mimo-v2.5'
+// 默认配置（兜底用）
+const DEFAULT_CONFIG = {
+  baseUrl: '/api/chat/completions',
+  apiKey: 'tp-couiwpsntndobnzl7k9lj9bpci9w5s0mpobpa3jpxztllggz',
+  model: 'mimo-v2.5',
+  contextLength: 1048576
+}
 
+// 联网搜索配置（保留）
 const WEB_SEARCH_ENDPOINT = '/xiaomi/chat/completions'
 const WEB_SEARCH_KEY = 'sk-czpchdsb2z6ze72oxv97re74td8rrtrnu5fcyy99jav21yw5'
 
 /**
+ * 从设置读取 AI 配置
+ */
+async function getAIConfig() {
+  try {
+    const s = await getSettings()
+    return {
+      baseUrl: s.baseUrl || DEFAULT_CONFIG.baseUrl,
+      apiKey: s.apiKey || DEFAULT_CONFIG.apiKey,
+      model: s.model || DEFAULT_CONFIG.model,
+      contextLength: s.contextLength || DEFAULT_CONFIG.contextLength
+    }
+  } catch {
+    return DEFAULT_CONFIG
+  }
+}
+
+/**
+ * 测试 AI 连接
+ */
+export async function testConnection() {
+  const config = await getAIConfig()
+
+  const response = await fetch(config.baseUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.apiKey}`
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages: [{ role: 'user', content: '你好，请回复"连接成功"' }],
+      max_completion_tokens: 50,
+      stream: false
+    })
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`HTTP ${response.status}: ${errorText.slice(0, 200)}`)
+  }
+
+  const data = await response.json()
+  const content = data.choices?.[0]?.message?.content || ''
+  return { success: true, content, model: config.model }
+}
+
+/**
  * 流式调用 LLM API
- * @returns {Promise<string>} 完整响应文本
  */
 async function callLLMStream({ system, messages, maxTokens, temperature, webSearch = false, onChunk }) {
+  const config = await getAIConfig()
+
   const body = {
-    model: MODEL,
+    model: config.model,
     messages: [
       ...(system ? [{ role: 'system', content: system }] : []),
       ...messages
     ],
-    max_completion_tokens: maxTokens || 131072,
+    max_completion_tokens: maxTokens || Math.min(config.contextLength, 131072),
     temperature: temperature || 0.8,
     stream: true
   }
@@ -33,8 +88,8 @@ async function callLLMStream({ system, messages, maxTokens, temperature, webSear
     body.tool_choice = 'auto'
   }
 
-  const endpoint = webSearch ? WEB_SEARCH_ENDPOINT : API_ENDPOINT
-  const key = webSearch ? WEB_SEARCH_KEY : API_KEY
+  const endpoint = webSearch ? WEB_SEARCH_ENDPOINT : config.baseUrl
+  const key = webSearch ? WEB_SEARCH_KEY : config.apiKey
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -50,10 +105,9 @@ async function callLLMStream({ system, messages, maxTokens, temperature, webSear
     if (errorText.includes('webSearchEnabled')) {
       throw new Error('联网搜索未开通，请在 MiMo 控制台开通「联网服务插件」')
     }
-    throw new Error(`API 调用失败: ${response.status}`)
+    throw new Error(`API 调用失败: ${response.status} - ${errorText.slice(0, 100)}`)
   }
 
-  // 读取 SSE 流
   const reader = response.body.getReader()
   const decoder = new TextDecoder()
   let fullContent = ''
@@ -65,7 +119,7 @@ async function callLLMStream({ system, messages, maxTokens, temperature, webSear
 
     buffer += decoder.decode(value, { stream: true })
     const lines = buffer.split('\n')
-    buffer = lines.pop() || '' // 保留不完整的行
+    buffer = lines.pop() || ''
 
     for (const line of lines) {
       const trimmed = line.trim()
@@ -90,16 +144,18 @@ async function callLLMStream({ system, messages, maxTokens, temperature, webSear
 }
 
 /**
- * 非流式调用（兼容旧逻辑）
+ * 非流式调用
  */
 async function callLLM({ system, messages, maxTokens, temperature, webSearch = false }) {
+  const config = await getAIConfig()
+
   const body = {
-    model: MODEL,
+    model: config.model,
     messages: [
       ...(system ? [{ role: 'system', content: system }] : []),
       ...messages
     ],
-    max_completion_tokens: maxTokens || 131072,
+    max_completion_tokens: maxTokens || Math.min(config.contextLength, 131072),
     temperature: temperature || 0.8,
     stream: false
   }
@@ -109,8 +165,8 @@ async function callLLM({ system, messages, maxTokens, temperature, webSearch = f
     body.tool_choice = 'auto'
   }
 
-  const endpoint = webSearch ? WEB_SEARCH_ENDPOINT : API_ENDPOINT
-  const key = webSearch ? WEB_SEARCH_KEY : API_KEY
+  const endpoint = webSearch ? WEB_SEARCH_ENDPOINT : config.baseUrl
+  const key = webSearch ? WEB_SEARCH_KEY : config.apiKey
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -126,7 +182,7 @@ async function callLLM({ system, messages, maxTokens, temperature, webSearch = f
     if (errorText.includes('webSearchEnabled')) {
       throw new Error('联网搜索未开通，请在 MiMo 控制台开通「联网服务插件」')
     }
-    throw new Error(`API 调用失败: ${response.status}`)
+    throw new Error(`API 调用失败: ${response.status} - ${errorText.slice(0, 100)}`)
   }
 
   const data = await response.json()
@@ -146,7 +202,6 @@ function buildMessageContent(text, image) {
 
 /**
  * 与角色对话（支持流式、图片和联网搜索）
- * @param {Function} onChunk - 流式回调，每收到一段文本调用一次
  */
 export async function chatWithCharacter(
   character, chatHistory, userMessage, allCharacters, getCharacter,
@@ -160,7 +215,6 @@ export async function chatWithCharacter(
   const messages = [...formattedHistory, userMsg]
 
   if (onChunk) {
-    // 流式模式
     const content = await callLLMStream({
       system: systemPrompt,
       messages,
@@ -171,7 +225,6 @@ export async function chatWithCharacter(
     })
     return { content, annotations: [] }
   } else {
-    // 非流式模式
     return callLLM({
       system: systemPrompt,
       messages,
@@ -196,7 +249,6 @@ export async function getRespondingCharacters(userMessage, characters) {
       temperature: 0.3
     })
 
-    // 正则容错提取 JSON 数组
     const match = result.content.match(/\[[\s\S]*?\]/)
     if (match) {
       try {
@@ -205,7 +257,6 @@ export async function getRespondingCharacters(userMessage, characters) {
           return parsed
         }
       } catch {
-        // JSON 解析失败，尝试提取 ID 字符串
         const idMatches = match[0].match(/"[^"]+"/g)
         if (idMatches) {
           return idMatches.map(s => s.replace(/"/g, ''))
@@ -213,11 +264,9 @@ export async function getRespondingCharacters(userMessage, characters) {
       }
     }
 
-    // fallback: 随机抽取一位活跃度低的角色
     return characters.length > 0 ? [characters[Math.floor(Math.random() * characters.length)].id] : []
   } catch (error) {
     console.error('获取回复角色失败:', error)
-    // fallback
     return characters.length > 0 ? [characters[0].id] : []
   }
 }

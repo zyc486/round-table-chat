@@ -13,7 +13,14 @@ export const useSettingsStore = defineStore('settings', () => {
     replyDelay: 800,
     replyLength: 100,
     voiceEnabled: false,
-    defaultVoice: '冰糖'
+    defaultVoice: '冰糖',
+    // AI 配置
+    baseUrl: '/api/chat/completions',
+    model: 'mimo-v2.5',
+    contextLength: 1048576,
+    // TTS 配置
+    ttsBaseUrl: '/api/chat/completions',
+    ttsApiKey: ''
   })
   const loading = ref(false)
 

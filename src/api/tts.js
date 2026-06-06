@@ -1,13 +1,12 @@
 /**
  * TTS 语音合成 API
- * 使用 MiMo-V2.5-TTS 模型
- * 支持 IndexedDB 音频缓存
+ * 从设置读取 Base URL / API Key
  */
 
-import { getAudioCache, putAudioCache } from '../utils/db.js'
+import { getAudioCache, putAudioCache, getSettings } from '../utils/db.js'
 
-const TTS_ENDPOINT = '/api/chat/completions'
-const TTS_KEY = 'tp-couiwpsntndobnzl7k9lj9bpci9w5s0mpobpa3jpxztllggz'
+const DEFAULT_TTS_ENDPOINT = '/api/chat/completions'
+const DEFAULT_TTS_KEY = 'tp-couiwpsntndobnzl7k9lj9bpci9w5s0mpobpa3jpxztllggz'
 
 export const VOICE_PRESETS = [
   { id: '冰糖', name: '冰糖', gender: 'female', lang: '中文' },
@@ -20,17 +19,27 @@ export const VOICE_PRESETS = [
   { id: 'Dean', name: 'Dean', gender: 'male', lang: '英文' }
 ]
 
-/**
- * 语音合成（带 IndexedDB 缓存）
- */
+async function getTTSConfig() {
+  try {
+    const s = await getSettings()
+    return {
+      endpoint: s.ttsBaseUrl || s.baseUrl || DEFAULT_TTS_ENDPOINT,
+      key: s.ttsApiKey || s.apiKey || DEFAULT_TTS_KEY
+    }
+  } catch {
+    return { endpoint: DEFAULT_TTS_ENDPOINT, key: DEFAULT_TTS_KEY }
+  }
+}
+
 export async function synthesizeSpeech(text, voice = '冰糖', style = '') {
   const cacheKey = `${voice}:${style}:${text}`
 
-  // 检查 IndexedDB 缓存
   const cached = await getAudioCache(cacheKey)
   if (cached) {
     return playAudio(cached)
   }
+
+  const config = await getTTSConfig()
 
   const messages = []
   if (style) {
@@ -39,11 +48,11 @@ export async function synthesizeSpeech(text, voice = '冰糖', style = '') {
   messages.push({ role: 'assistant', content: text })
 
   try {
-    const response = await fetch(TTS_ENDPOINT, {
+    const response = await fetch(config.endpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${TTS_KEY}`
+        'Authorization': `Bearer ${config.key}`
       },
       body: JSON.stringify({
         model: 'mimo-v2.5-tts',
@@ -66,8 +75,6 @@ export async function synthesizeSpeech(text, voice = '冰糖', style = '') {
     }
 
     const audioSrc = `data:audio/wav;base64,${audioBase64}`
-
-    // 存入 IndexedDB 缓存
     await putAudioCache(cacheKey, audioSrc)
 
     return playAudio(audioSrc)

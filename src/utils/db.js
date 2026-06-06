@@ -13,6 +13,32 @@ db.version(1).stores({
   audioCache: 'key, createdAt'
 })
 
+db.version(2).stores({
+  characters: 'id, name, createdAt',
+  messages: 'id, characterId, sessionId, timestamp, [characterId+timestamp]',
+  settings: 'key',
+  audioCache: 'key, createdAt',
+  sessions: 'id, createdAt'
+}).upgrade(async (tx) => {
+  // 给现有消息补充 sessionId
+  const msgs = await tx.table('messages').toArray()
+  if (msgs.length > 0) {
+    const session = {
+      id: 'session_legacy',
+      title: '历史对话',
+      createdAt: msgs[0].timestamp || Date.now(),
+      characterIds: [],
+      messageCount: msgs.length,
+      lastMessage: msgs[msgs.length - 1]?.content?.slice(0, 50) || ''
+    }
+    await tx.table('sessions').put(session)
+    for (const msg of msgs) {
+      msg.sessionId = 'session_legacy'
+      await tx.table('messages').put(msg)
+    }
+  }
+})
+
 // ===== 角色 =====
 export async function getCharacters() {
   return db.characters.toArray()
@@ -38,6 +64,10 @@ export async function getMessages() {
   return db.messages.orderBy('timestamp').toArray()
 }
 
+export async function getMessagesBySession(sessionId) {
+  return db.messages.where('sessionId').equals(sessionId).sortBy('timestamp')
+}
+
 export async function saveMessages(messages) {
   await db.transaction('rw', db.messages, async () => {
     await db.messages.clear()
@@ -60,6 +90,29 @@ export async function getMessageCount() {
 
 export async function clearMessages() {
   await db.messages.clear()
+}
+
+// ===== 会话 (Sessions) =====
+export async function getSessions() {
+  return db.sessions.orderBy('createdAt').reverse().toArray()
+}
+
+export async function putSession(session) {
+  await db.sessions.put(session)
+}
+
+export async function deleteSession(id) {
+  await db.transaction('rw', db.sessions, db.messages, async () => {
+    await db.sessions.delete(id)
+    await db.messages.where('sessionId').equals(id).delete()
+  })
+}
+
+export async function deleteAllSessions() {
+  await db.transaction('rw', db.sessions, db.messages, async () => {
+    await db.sessions.clear()
+    await db.messages.clear()
+  })
 }
 
 // ===== 设置 =====
@@ -88,7 +141,6 @@ export async function getAudioCache(key) {
 
 export async function putAudioCache(key, data) {
   await db.audioCache.put({ key, data, createdAt: Date.now() })
-  // 限制缓存条数
   const count = await db.audioCache.count()
   if (count > 200) {
     const oldest = await db.audioCache.orderBy('createdAt').limit(count - 150).toArray()
@@ -96,7 +148,7 @@ export async function putAudioCache(key, data) {
   }
 }
 
-// ===== 兼容层：api 对象（平滑迁移） =====
+// ===== 兼容层 =====
 export const api = {
   async getCharacters() { return getCharacters() },
   async saveCharacters(chars) { return saveCharacters(chars) },
@@ -114,7 +166,11 @@ export const api = {
       replyDelay: s.replyDelay || 800,
       replyLength: s.replyLength || 100,
       voiceEnabled: s.voiceEnabled || false,
-      defaultVoice: s.defaultVoice || '冰糖'
+      defaultVoice: s.defaultVoice || '冰糖',
+      // AI 配置
+      baseUrl: s.baseUrl || '/api/chat/completions',
+      model: s.model || 'mimo-v2.5',
+      contextLength: s.contextLength || 1048576
     }
   },
   async saveSettings(settings) { return saveSettings(settings) }

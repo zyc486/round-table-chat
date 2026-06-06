@@ -9,6 +9,76 @@
     </header>
 
     <main class="content">
+      <!-- AI 配置 -->
+      <section class="section">
+        <h2>🤖 AI 配置</h2>
+
+        <div class="form-item">
+          <label>Base URL</label>
+          <input
+            v-model="settingsStore.settings.baseUrl"
+            placeholder="/api/chat/completions"
+            @blur="save('baseUrl')"
+          />
+          <span class="form-hint">API 端点地址，支持 OpenAI 兼容格式</span>
+        </div>
+
+        <div class="form-item">
+          <label>API Key</label>
+          <div class="input-group">
+            <input
+              v-model="settingsStore.settings.apiKey"
+              :type="showApiKey ? 'text' : 'password'"
+              placeholder="输入 API Key"
+              @blur="save('apiKey')"
+            />
+            <button class="icon-btn" @click="showApiKey = !showApiKey">
+              {{ showApiKey ? '🙈' : '👁️' }}
+            </button>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-item flex-1">
+            <label>模型</label>
+            <input
+              v-model="settingsStore.settings.model"
+              placeholder="mimo-v2.5"
+              @blur="save('model')"
+            />
+          </div>
+          <div class="form-item flex-1">
+            <label>上下文长度</label>
+            <select v-model="settingsStore.settings.contextLength" @change="save('contextLength')">
+              <option :value="4096">4K</option>
+              <option :value="8192">8K</option>
+              <option :value="16384">16K</option>
+              <option :value="32768">32K</option>
+              <option :value="65536">64K</option>
+              <option :value="131072">128K</option>
+              <option :value="262144">256K</option>
+              <option :value="524288">512K</option>
+              <option :value="1048576">1M</option>
+              <option :value="2097152">2M</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="test-area">
+          <button
+            class="btn test-btn"
+            :class="{ success: testStatus === 'success', error: testStatus === 'error' }"
+            :disabled="testing"
+            @click="runTest"
+          >
+            {{ testing ? '测试中...' : testStatus === 'success' ? '✓ 连接成功' : testStatus === 'error' ? '✕ 连接失败' : '测试连接' }}
+          </button>
+          <div v-if="testResult" class="test-result" :class="testStatus">
+            {{ testResult }}
+          </div>
+        </div>
+      </section>
+
       <!-- 主题 -->
       <section class="section">
         <h2>外观</h2>
@@ -117,13 +187,15 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useSettingsStore } from '../stores/settings.js'
 import { useCharacterStore } from '../stores/character.js'
 import { useChatStore } from '../stores/chat.js'
+import { useSessionsStore } from '../stores/sessions.js'
 import { themeList } from '../utils/themes.js'
 import { VOICE_PRESETS } from '../api/tts.js'
+import { testConnection } from '../api/llm.js'
 import { clearAllStorage } from '../utils/storage.js'
 import { getCharacters, getMessages, getSettings, saveCharacters, saveMessages, saveSettings } from '../utils/db.js'
 
@@ -131,9 +203,15 @@ const router = useRouter()
 const settingsStore = useSettingsStore()
 const characterStore = useCharacterStore()
 const chatStore = useChatStore()
+const sessionsStore = useSessionsStore()
 
 const theme = computed(() => settingsStore.settings.theme || 'dark')
 const voicePresets = VOICE_PRESETS
+
+const showApiKey = ref(false)
+const testing = ref(false)
+const testStatus = ref('') // '' | 'success' | 'error'
+const testResult = ref('')
 
 onMounted(() => settingsStore.init())
 
@@ -145,6 +223,23 @@ async function setTheme(value) {
 
 async function save(key) {
   await settingsStore.updateSetting(key, settingsStore.settings[key])
+}
+
+async function runTest() {
+  testing.value = true
+  testStatus.value = ''
+  testResult.value = ''
+
+  try {
+    const result = await testConnection()
+    testStatus.value = 'success'
+    testResult.value = `模型: ${result.model} | 回复: ${result.content.slice(0, 80)}`
+  } catch (error) {
+    testStatus.value = 'error'
+    testResult.value = error.message.slice(0, 120)
+  } finally {
+    testing.value = false
+  }
 }
 
 async function exportData() {
@@ -184,12 +279,13 @@ function importData() {
   input.click()
 }
 
-function clearAll() {
+async function clearAll() {
   if (confirm('确定清空所有数据？')) {
     clearAllStorage()
-    characterStore.init()
-    chatStore.init()
-    settingsStore.init()
+    await sessionsStore.clearAll()
+    await characterStore.init()
+    await chatStore.init()
+    await settingsStore.init()
   }
 }
 </script>
@@ -270,6 +366,127 @@ function clearAll() {
   letter-spacing: 0.8px;
 }
 
+/* 表单项 */
+.form-item {
+  margin-bottom: 14px;
+}
+
+.form-item label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.form-item input,
+.form-item select {
+  width: 100%;
+  background: var(--surface-hover);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 14px;
+  outline: none;
+  font-family: inherit;
+  transition: border-color 0.2s ease;
+}
+
+.form-item input:focus,
+.form-item select:focus {
+  border-color: var(--accent);
+}
+
+.form-hint {
+  display: block;
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  opacity: 0.7;
+}
+
+.form-row {
+  display: flex;
+  gap: 12px;
+}
+
+.flex-1 { flex: 1; }
+
+.input-group {
+  display: flex;
+  gap: 6px;
+}
+
+.input-group input { flex: 1; }
+
+.icon-btn {
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  width: 40px;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.icon-btn:hover {
+  border-color: var(--accent);
+}
+
+/* 测试区域 */
+.test-area {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.test-btn {
+  width: 100%;
+  padding: 10px;
+  font-size: 14px;
+  transition: all 0.3s ease;
+}
+
+.test-btn.success {
+  background: #2d8a4e;
+  color: white;
+  border-color: transparent;
+}
+
+.test-btn.error {
+  background: #e04848;
+  color: white;
+  border-color: transparent;
+}
+
+.test-result {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.test-result.success {
+  background: rgba(45, 138, 78, 0.1);
+  color: #2d8a4e;
+  border: 1px solid rgba(45, 138, 78, 0.2);
+}
+
+.test-result.error {
+  background: rgba(224, 72, 72, 0.1);
+  color: #e04848;
+  border: 1px solid rgba(224, 72, 72, 0.2);
+}
+
+/* 主题 */
 .theme-options {
   display: flex;
   gap: 12px;
@@ -300,6 +517,7 @@ function clearAll() {
 
 .theme-card span { font-size: 13px; font-weight: 500; }
 
+/* 设置行 */
 .setting-row {
   display: flex;
   justify-content: space-between;
@@ -345,6 +563,7 @@ function clearAll() {
 .btn:hover { border-color: var(--text-secondary); }
 .btn.danger { background: #e04848; color: white; border-color: transparent; }
 .btn.danger:hover { background: #c43c3c; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* 开关 */
 .switch {
@@ -380,4 +599,10 @@ function clearAll() {
 
 input:checked + .slider { background: #da7756; }
 input:checked + .slider::before { transform: translateX(20px); }
+
+@media (max-width: 768px) {
+  .nav-inner { padding: 10px 16px; }
+  .content { padding: 16px; }
+  .form-row { flex-direction: column; gap: 0; }
+}
 </style>
