@@ -20,6 +20,18 @@ const WEB_SEARCH_ENDPOINT = '/xiaomi/chat/completions'
 const WEB_SEARCH_KEY = 'sk-czpchdsb2z6ze72oxv97re74td8rrtrnu5fcyy99jav21yw5'
 
 /**
+ * 解析 API 端点
+ * 外部 URL (http/https) 通过 Vite 代理转发，避免 CORS
+ * 相对路径直接使用
+ */
+function resolveEndpoint(url) {
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return { proxyUrl: '/llm-proxy', targetUrl: url }
+  }
+  return { proxyUrl: url, targetUrl: null }
+}
+
+/**
  * 从设置读取 AI 配置
  */
 async function getAIConfig() {
@@ -41,13 +53,19 @@ async function getAIConfig() {
  */
 export async function testConnection() {
   const config = await getAIConfig()
+  const { proxyUrl, targetUrl } = resolveEndpoint(config.baseUrl)
 
-  const response = await fetch(config.baseUrl, {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${config.apiKey}`
+  }
+  if (targetUrl) {
+    headers['X-Target-URL'] = targetUrl
+  }
+
+  const response = await fetch(proxyUrl, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${config.apiKey}`
-    },
+    headers,
     body: JSON.stringify({
       model: config.model,
       messages: [{ role: 'user', content: '你好，请回复"连接成功"' }],
@@ -88,15 +106,21 @@ async function callLLMStream({ system, messages, maxTokens, temperature, webSear
     body.tool_choice = 'auto'
   }
 
-  const endpoint = webSearch ? WEB_SEARCH_ENDPOINT : config.baseUrl
+  const rawEndpoint = webSearch ? WEB_SEARCH_ENDPOINT : config.baseUrl
   const key = webSearch ? WEB_SEARCH_KEY : config.apiKey
+  const { proxyUrl, targetUrl } = resolveEndpoint(rawEndpoint)
 
-  const response = await fetch(endpoint, {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${key}`
+  }
+  if (targetUrl) {
+    headers['X-Target-URL'] = targetUrl
+  }
+
+  const response = await fetch(proxyUrl, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${key}`
-    },
+    headers,
     body: JSON.stringify(body)
   })
 
@@ -165,15 +189,21 @@ async function callLLM({ system, messages, maxTokens, temperature, webSearch = f
     body.tool_choice = 'auto'
   }
 
-  const endpoint = webSearch ? WEB_SEARCH_ENDPOINT : config.baseUrl
+  const rawEndpoint = webSearch ? WEB_SEARCH_ENDPOINT : config.baseUrl
   const key = webSearch ? WEB_SEARCH_KEY : config.apiKey
+  const { proxyUrl, targetUrl } = resolveEndpoint(rawEndpoint)
 
-  const response = await fetch(endpoint, {
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${key}`
+  }
+  if (targetUrl) {
+    headers['X-Target-URL'] = targetUrl
+  }
+
+  const response = await fetch(proxyUrl, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${key}`
-    },
+    headers,
     body: JSON.stringify(body)
   })
 

@@ -31,6 +31,13 @@ async function getTTSConfig() {
   }
 }
 
+function resolveEndpoint(url) {
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return { proxyUrl: '/llm-proxy', targetUrl: url }
+  }
+  return { proxyUrl: url, targetUrl: null }
+}
+
 export async function synthesizeSpeech(text, voice = '冰糖', style = '') {
   const cacheKey = `${voice}:${style}:${text}`
 
@@ -40,6 +47,7 @@ export async function synthesizeSpeech(text, voice = '冰糖', style = '') {
   }
 
   const config = await getTTSConfig()
+  const { proxyUrl, targetUrl } = resolveEndpoint(config.endpoint)
 
   const messages = []
   if (style) {
@@ -48,12 +56,17 @@ export async function synthesizeSpeech(text, voice = '冰糖', style = '') {
   messages.push({ role: 'assistant', content: text })
 
   try {
-    const response = await fetch(config.endpoint, {
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${config.key}`
+    }
+    if (targetUrl) {
+      headers['X-Target-URL'] = targetUrl
+    }
+
+    const response = await fetch(proxyUrl, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${config.key}`
-      },
+      headers,
       body: JSON.stringify({
         model: 'mimo-v2.5-tts',
         messages,
