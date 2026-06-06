@@ -124,7 +124,8 @@ import { useCharacterStore } from '../stores/character.js'
 import { useChatStore } from '../stores/chat.js'
 import { themeList } from '../utils/themes.js'
 import { VOICE_PRESETS } from '../api/tts.js'
-import { clearAllStorage, getStorage, setStorage, STORAGE_KEYS } from '../utils/storage.js'
+import { clearAllStorage } from '../utils/storage.js'
+import { getCharacters, getMessages, getSettings, saveCharacters, saveMessages, saveSettings } from '../utils/db.js'
 
 const router = useRouter()
 const settingsStore = useSettingsStore()
@@ -146,12 +147,12 @@ async function save(key) {
   await settingsStore.updateSetting(key, settingsStore.settings[key])
 }
 
-function exportData() {
+async function exportData() {
   const data = {
-    version: '1.0.0',
-    characters: getStorage(STORAGE_KEYS.CHARACTERS, []),
-    messages: getStorage(STORAGE_KEYS.MESSAGES, []),
-    settings: getStorage(STORAGE_KEYS.SETTINGS, {})
+    version: '2.0.0',
+    characters: await getCharacters(),
+    messages: await getMessages(),
+    settings: await getSettings()
   }
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
   const a = document.createElement('a')
@@ -169,9 +170,9 @@ function importData() {
     if (!file) return
     try {
       const data = JSON.parse(await file.text())
-      if (data.characters) setStorage(STORAGE_KEYS.CHARACTERS, data.characters)
-      if (data.messages) setStorage(STORAGE_KEYS.MESSAGES, data.messages)
-      if (data.settings) setStorage(STORAGE_KEYS.SETTINGS, data.settings)
+      if (data.characters) await saveCharacters(data.characters)
+      if (data.messages) await saveMessages(data.messages)
+      if (data.settings) await saveSettings(data.settings)
       await characterStore.init()
       await chatStore.init()
       await settingsStore.init()

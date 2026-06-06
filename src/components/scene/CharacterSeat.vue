@@ -1,8 +1,14 @@
 <template>
   <div
     class="seat"
-    :class="{ 'is-speaking': isSpeaking, 'is-thinking': isThinking, 'is-user': isUser }"
+    :class="{
+      'is-speaking': isSpeaking,
+      'is-thinking': isThinking,
+      'is-user': isUser,
+      'is-streaming': isStreaming
+    }"
     @click="$emit('click')"
+    ref="seatRef"
   >
     <div class="avatar-wrap">
       <div class="avatar-ring">
@@ -19,12 +25,19 @@
 
     <div class="name" :class="{ user: isUser }">{{ character.name }}</div>
 
+    <!-- 气泡：流式打字机效果 -->
     <transition name="bubble">
-      <div v-if="isSpeaking && speakingText && speakingText !== '思考中...'" class="bubble">
-        <div class="bubble-content">{{ truncate(speakingText, 40) }}</div>
+      <div v-if="shouldShowBubble" class="bubble">
+        <div class="bubble-content">
+          <span v-if="isStreaming" class="typewriter-text">
+            {{ truncatedBubbleText }}<span class="cursor">|</span>
+          </span>
+          <span v-else>{{ truncatedBubbleText }}</span>
+        </div>
       </div>
     </transition>
 
+    <!-- 思考气泡 -->
     <transition name="bubble">
       <div v-if="isThinking" class="bubble">
         <div class="bubble-content thinking-dots">
@@ -36,15 +49,51 @@
 </template>
 
 <script setup>
-defineProps({
+import { ref, computed } from 'vue'
+import { analyzeEmotion } from '../../utils/emojis.js'
+import { emitParticles, injectParticleStyles } from '../../utils/particles.js'
+
+const props = defineProps({
   character: { type: Object, required: true },
   isSpeaking: { type: Boolean, default: false },
   isThinking: { type: Boolean, default: false },
+  isStreaming: { type: Boolean, default: false },
   isUser: { type: Boolean, default: false },
   speakingText: { type: String, default: '' }
 })
 
 defineEmits(['click'])
+
+const seatRef = ref(null)
+
+const shouldShowBubble = computed(() => {
+  return props.isSpeaking && props.speakingText && props.speakingText !== '思考中...'
+})
+
+const truncatedBubbleText = computed(() => {
+  const text = props.speakingText || ''
+  return text.length > 60 ? text.slice(0, 60) + '...' : text
+})
+
+// 情绪粒子效果
+injectParticleStyles()
+
+let lastEmotion = ''
+let particleTimer = null
+
+import { watch } from 'vue'
+
+watch(() => props.speakingText, (newText) => {
+  if (!newText || !props.isSpeaking) return
+  const emotion = analyzeEmotion(newText)
+  if (emotion !== lastEmotion && emotion !== 'default') {
+    lastEmotion = emotion
+    clearTimeout(particleTimer)
+    particleTimer = setTimeout(() => {
+      emitParticles(seatRef.value, emotion, 5)
+    }, 200)
+  }
+})
 
 function truncate(text, len) {
   return text?.length > len ? text.slice(0, len) + '...' : text
@@ -70,10 +119,22 @@ function truncate(text, len) {
   50% { transform: translateY(-6px); }
 }
 
+/* 待机呼吸动画 */
 .avatar-wrap {
   position: relative;
-  width: 48px;
-  height: 48px;
+  width: 52px;
+  height: 52px;
+  animation: idleBreathe 3s ease-in-out infinite;
+}
+
+.seat.is-speaking .avatar-wrap,
+.seat.is-thinking .avatar-wrap {
+  animation: none;
+}
+
+@keyframes idleBreathe {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-3px) scale(1.03); }
 }
 
 .avatar-ring {
@@ -93,7 +154,7 @@ function truncate(text, len) {
 
 @keyframes pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(218, 119, 86, 0.3); }
-  50% { box-shadow: 0 0 0 6px rgba(218, 119, 86, 0); }
+  50% { box-shadow: 0 0 0 8px rgba(218, 119, 86, 0); }
 }
 
 .avatar {
@@ -161,7 +222,7 @@ function truncate(text, len) {
 
 @keyframes ring {
   0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.1); opacity: 0.5; }
+  50% { transform: scale(1.15); opacity: 0.5; }
 }
 
 .name {
@@ -186,7 +247,7 @@ function truncate(text, len) {
   transform: translateX(-50%);
   z-index: 100;
   min-width: 100px;
-  max-width: 180px;
+  max-width: 200px;
 }
 
 .bubble-enter-active { animation: bubbleIn 0.3s ease-out; }
@@ -219,6 +280,18 @@ function truncate(text, len) {
   border-left: 6px solid transparent;
   border-right: 6px solid transparent;
   border-top: 6px solid var(--surface, #252220);
+}
+
+/* 打字机光标 */
+.cursor {
+  animation: blink 0.6s infinite;
+  color: var(--accent, #da7756);
+  font-weight: 300;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
 }
 
 .thinking-dots {

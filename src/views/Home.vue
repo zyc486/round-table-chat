@@ -18,9 +18,10 @@
       <div class="scene">
         <RoundTable
           :characters="characterStore.characters"
-          :speaking-id="chatStore.speakingCharacterId"
-          :thinking-id="chatStore.thinkingCharacterId"
-          :speaking-text="speakingText"
+          :speaking-id="chatUI.speakingCharacterId"
+          :thinking-id="chatUI.thinkingCharacterId"
+          :streaming-id="chatUI.isStreaming ? chatUI.speakingCharacterId : null"
+          :speaking-text="chatUI.speakingText"
           :theme="currentTheme"
           @click-character="handleCharacterClick"
         />
@@ -33,16 +34,18 @@
           <button class="text-btn" @click="clearChat">清空</button>
         </div>
         <MessageList
-          :messages="chatStore.messages"
+          :messages="chatData.messages"
           :characters="characterStore.characters"
           :show-emoji="true"
+          :streaming-message-id="chatUI.isStreaming ? streamingMsgId : null"
+          :stream-display-text="chatUI.streamingText"
           @play-voice="handlePlayVoice"
         />
         <ChatBar
-          :mode="chatStore.currentMode"
+          :mode="chatData.currentMode"
           :characters="characterStore.characters"
-          :loading="isProcessing"
-          @send="handleSend"
+          :loading="orchestrator.isProcessing.value"
+          @send="orchestrator.send"
           @mode-change="handleModeChange"
         />
       </div>
@@ -72,12 +75,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useCharacterStore } from '../stores/character.js'
-import { useChatStore } from '../stores/chat.js'
+import { useChatDataStore } from '../stores/chatData.js'
+import { useChatUIStore } from '../stores/chatUI.js'
 import { useSettingsStore } from '../stores/settings.js'
-import { chatWithCharacter, getRespondingCharacters } from '../api/llm.js'
+import { useChatOrchestrator } from '../composables/useChatOrchestrator.js'
 import { playSpeech, stopSpeech } from '../api/tts.js'
 import { themes } from '../utils/themes.js'
 import RoundTable from '../components/scene/RoundTable.vue'
@@ -86,21 +90,31 @@ import ChatBar from '../components/chat/ChatBar.vue'
 
 const router = useRouter()
 const characterStore = useCharacterStore()
-const chatStore = useChatStore()
+const chatData = useChatDataStore()
+const chatUI = useChatUIStore()
 const settingsStore = useSettingsStore()
+const orchestrator = useChatOrchestrator()
 
-const isProcessing = ref(false)
-const speakingText = ref('')
 const showCharacterDetail = ref(false)
 const selectedCharacter = ref(null)
+const streamingMsgId = ref(null)
 
 const currentThemeValue = computed(() => settingsStore.settings.theme || 'dark')
 const currentTheme = computed(() => themes[currentThemeValue.value] || themes.dark)
 
 onMounted(async () => {
   await characterStore.init()
-  await chatStore.init()
+  await chatData.init()
   await settingsStore.init()
+})
+
+// 监听流式状态，创建临时消息
+watch(() => chatUI.isStreaming, (streaming) => {
+  if (streaming && chatUI.speakingCharacterId) {
+    streamingMsgId.value = `streaming_${chatUI.speakingCharacterId}_${Date.now()}`
+  } else {
+    streamingMsgId.value = null
+  }
 })
 
 function goToCharacters() { router.push('/characters') }
@@ -108,7 +122,7 @@ function goToSettings() { router.push('/settings') }
 
 function clearChat() {
   if (confirm('确定清空所有聊天记录？')) {
-    chatStore.clearMessages()
+    chatData.clearMessages()
   }
 }
 
@@ -117,141 +131,7 @@ function handleCharacterClick(character) {
   showCharacterDetail.value = true
 }
 
-async function handleSend({ text, image, webSearch }) {
-  if (isProcessing.value || (!text && !image)) return
-
-  await chatStore.addUserMessage(text || '[图片]', image)
-
-  if (characterStore.characters.length === 0) {
-    alert('请先添加角色')
-    return
-  }
-
-  isProcessing.value = true
-
-  try {
-    const mode = chatStore.currentMode
-    const userMessage = text || '请描述一下这张图片'
-
-    if (mode === 'round_robin') {
-      await handleRoundRobin(userMessage, image, webSearch)
-    } else if (mode === 'mention') {
-      await handleMention(userMessage, image, webSearch)
-    } else if (mode === 'free') {
-      await handleFree(userMessage, image, webSearch)
-    }
-  } catch (error) {
-    console.error('AI 回复失败:', error)
-    alert('AI 回复失败: ' + error.message)
-  } finally {
-    isProcessing.value = false
-    chatStore.setThinkingCharacter(null)
-    chatStore.setSpeakingCharacter(null)
-    speakingText.value = ''
-  }
-}
-
-async function handleRoundRobin(userMessage, image, webSearch) {
-  const history = chatStore.getRecentMessages(50)
-  for (const char of characterStore.characters) {
-    chatStore.setThinkingCharacter(char.id)
-    speakingText.value = '思考中...'
-    await sleep(500)
-
-    const result = await chatWithCharacter(
-      char, history, userMessage, characterStore.characters,
-      characterStore.getCharacterById, image, settingsStore.settings.replyLength, webSearch
-    )
-
-    chatStore.setThinkingCharacter(null)
-    chatStore.setSpeakingCharacter(char.id)
-    speakingText.value = result.content
-
-    // 保存消息（包含搜索来源）
-    await chatStore.addCharacterMessage(char.id, result.content, result.annotations)
-
-    // 自动播放语音
-    await autoPlayVoice(char.id, result.content)
-
-    await sleep(settingsStore.settings.replyDelay || 800)
-    chatStore.setSpeakingCharacter(null)
-    speakingText.value = ''
-  }
-}
-
-async function handleMention(userMessage, image, webSearch) {
-  const mentionMatch = userMessage.match(/@(\S+)/)
-  if (!mentionMatch) {
-    alert('请用 @名字 指定角色')
-    return
-  }
-
-  const targetName = mentionMatch[1]
-  const targetChar = characterStore.characters.find(
-    c => c.name === targetName || c.name.includes(targetName)
-  )
-
-  if (!targetChar) {
-    alert(`找不到角色: ${targetName}`)
-    return
-  }
-
-  chatStore.setThinkingCharacter(targetChar.id)
-  speakingText.value = '思考中...'
-  await sleep(500)
-
-  const history = chatStore.getRecentMessages(50)
-  const result = await chatWithCharacter(
-    targetChar, history, userMessage, characterStore.characters,
-    characterStore.getCharacterById, image, settingsStore.settings.replyLength, webSearch
-  )
-
-  chatStore.setThinkingCharacter(null)
-  chatStore.setSpeakingCharacter(targetChar.id)
-  speakingText.value = result.content
-  await chatStore.addCharacterMessage(targetChar.id, result.content, result.annotations)
-
-  // 自动播放语音
-  await autoPlayVoice(targetChar.id, result.content)
-
-  await sleep(settingsStore.settings.replyDelay || 800)
-  chatStore.setSpeakingCharacter(null)
-  speakingText.value = ''
-}
-
-async function handleFree(userMessage, image, webSearch) {
-  const history = chatStore.getRecentMessages(50)
-  const respondingIds = await getRespondingCharacters(userMessage, characterStore.characters)
-
-  for (const charId of respondingIds) {
-    const char = characterStore.getCharacterById(charId)
-    if (!char) continue
-
-    chatStore.setThinkingCharacter(char.id)
-    speakingText.value = '思考中...'
-    await sleep(500)
-
-    const result = await chatWithCharacter(
-      char, history, userMessage, characterStore.characters,
-      characterStore.getCharacterById, image, settingsStore.settings.replyLength, webSearch
-    )
-
-    chatStore.setThinkingCharacter(null)
-    chatStore.setSpeakingCharacter(char.id)
-    speakingText.value = result.content
-    await chatStore.addCharacterMessage(char.id, result.content, result.annotations)
-
-    // 自动播放语音
-    await autoPlayVoice(char.id, result.content)
-
-    await sleep(settingsStore.settings.replyDelay || 800)
-    chatStore.setSpeakingCharacter(null)
-    speakingText.value = ''
-  }
-}
-
-function handleModeChange(mode) { chatStore.setMode(mode) }
-function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)) }
+function handleModeChange(mode) { chatData.setMode(mode) }
 
 // 播放语音
 async function handlePlayVoice(msg) {
@@ -265,20 +145,6 @@ async function handlePlayVoice(msg) {
   } catch (error) {
     console.error('语音播放失败:', error)
     alert('语音播放失败: ' + error.message)
-  }
-}
-
-// 自动播放语音（如果开启了）
-async function autoPlayVoice(characterId, text) {
-  if (!settingsStore.settings.voiceEnabled) return
-
-  const char = characterStore.getCharacterById(characterId)
-  if (!char?.voice?.enabled) return
-
-  try {
-    await playSpeech(text, char.voice.voiceId, char.voice.style)
-  } catch (error) {
-    console.error('自动播放语音失败:', error)
   }
 }
 </script>
@@ -536,8 +402,9 @@ async function autoPlayVoice(characterId, text) {
 
   .scene {
     flex: none;
-    height: 40vh;
+    height: 35vh;
     padding: 16px;
+    min-height: 200px;
   }
 
   .chat {
@@ -545,6 +412,25 @@ async function autoPlayVoice(characterId, text) {
     flex: 1;
     border-left: none;
     border-top: 1px solid var(--border);
+  }
+
+  .nav-inner {
+    padding: 10px 16px;
+  }
+
+  .logo {
+    font-size: 15px;
+  }
+}
+
+@media (max-width: 480px) {
+  .scene {
+    height: 30vh;
+    padding: 10px;
+  }
+
+  .chat-header {
+    padding: 12px 14px;
   }
 }
 </style>

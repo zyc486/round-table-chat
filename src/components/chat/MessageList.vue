@@ -6,7 +6,7 @@
     </div>
 
     <div
-      v-for="msg in messages"
+      v-for="msg in visibleMessages"
       :key="msg.id"
       class="msg"
       :class="{ 'is-user': msg.isUser }"
@@ -29,9 +29,22 @@
         </div>
 
         <div class="bubble-row">
-          <div v-if="msg.content && msg.content !== '[图片]'" class="bubble" @click="copyMessage(msg.content)">
-            {{ msg.content }}
+          <!-- 流式打字机效果的最新消息 -->
+          <div
+            v-if="isLatestStreamMessage(msg)"
+            class="bubble streaming"
+            @click="copyMessage(msg.content)"
+          >
+            <span class="typewriter-text">{{ streamDisplayText }}<span class="cursor">|</span></span>
           </div>
+          <!-- 普通消息：支持 Markdown -->
+          <div
+            v-else-if="msg.content && msg.content !== '[图片]'"
+            class="bubble"
+            @click="copyMessage(msg.content)"
+            v-html="renderContent(msg.content)"
+          ></div>
+
           <button
             v-if="!msg.isUser && msg.content"
             class="voice-btn"
@@ -64,13 +77,16 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, computed } from 'vue'
 import { getCharacterEmoji } from '../../utils/emojis.js'
+import { renderMarkdown } from '../../utils/markdown.js'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
   characters: { type: Array, default: () => [] },
-  showEmoji: { type: Boolean, default: true }
+  showEmoji: { type: Boolean, default: true },
+  streamingMessageId: { type: String, default: null },
+  streamDisplayText: { type: String, default: '' }
 })
 
 const emit = defineEmits(['play-voice'])
@@ -78,6 +94,36 @@ const emit = defineEmits(['play-voice'])
 const listRef = ref(null)
 const showPreview = ref(false)
 const previewSrc = ref('')
+
+// 虚拟滚动：当消息超过 200 条时只渲染最新的 200 条
+const VIRTUAL_THRESHOLD = 200
+const VIRTUAL_LIMIT = 200
+
+const visibleMessages = computed(() => {
+  if (props.messages.length <= VIRTUAL_THRESHOLD) {
+    return props.messages
+  }
+  return props.messages.slice(-VIRTUAL_LIMIT)
+})
+
+function isLatestStreamMessage(msg) {
+  return props.streamingMessageId && msg.id === props.streamingMessageId
+}
+
+function renderContent(content) {
+  if (!content) return ''
+  // 短文本直接返回（避免不必要的 Markdown 解析开销）
+  if (content.length < 50 && !content.includes('```') && !content.includes('`')) {
+    return escapeHtml(content)
+  }
+  return renderMarkdown(content)
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div')
+  div.textContent = text
+  return div.innerHTML
+}
 
 function getCharacter(id) {
   if (!id) return null
@@ -106,12 +152,22 @@ async function copyMessage(content) {
     el.style.cssText = 'position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#0071e3;color:white;padding:8px 16px;border-radius:8px;font-size:13px;z-index:9999;'
     document.body.appendChild(el)
     setTimeout(() => el.remove(), 1500)
-  } catch (e) {}
+  } catch {}
 }
 
 watch(() => props.messages.length, async () => {
   await nextTick()
   if (listRef.value) listRef.value.scrollTop = listRef.value.scrollHeight
+})
+
+watch(() => props.streamDisplayText, async () => {
+  await nextTick()
+  if (listRef.value) {
+    const isNearBottom = listRef.value.scrollHeight - listRef.value.scrollTop - listRef.value.clientHeight < 100
+    if (isNearBottom) {
+      listRef.value.scrollTop = listRef.value.scrollHeight
+    }
+  }
 })
 </script>
 
@@ -121,6 +177,7 @@ watch(() => props.messages.length, async () => {
   overflow-y: auto;
   padding: 16px 20px;
   min-height: 0;
+  scroll-behavior: smooth;
 }
 
 .empty {
@@ -144,12 +201,12 @@ watch(() => props.messages.length, async () => {
   display: flex;
   gap: 10px;
   padding: 10px 0;
-  animation: fadeIn 0.3s ease-out;
+  animation: msgFadeIn 0.3s ease-out;
 }
 
 .msg.is-user { flex-direction: row-reverse; }
 
-@keyframes fadeIn {
+@keyframes msgFadeIn {
   from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
@@ -230,6 +287,8 @@ watch(() => props.messages.length, async () => {
   word-break: break-word;
   transition: opacity 0.2s ease;
   border: 1px solid var(--border, rgba(0, 0, 0, 0.06));
+  max-width: 100%;
+  overflow-wrap: break-word;
 }
 
 .bubble:hover { opacity: 0.85; }
@@ -238,6 +297,82 @@ watch(() => props.messages.length, async () => {
   background: linear-gradient(135deg, #da7756, #c4643f);
   color: white;
   border-color: transparent;
+}
+
+/* 流式消息样式 */
+.bubble.streaming {
+  border-color: rgba(218, 119, 86, 0.3);
+  box-shadow: 0 0 0 1px rgba(218, 119, 86, 0.1);
+}
+
+/* 打字机光标 */
+.cursor {
+  animation: blink 0.6s infinite;
+  color: var(--accent, #da7756);
+  font-weight: 300;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+/* Markdown 渲染样式 */
+.bubble :deep(h1),
+.bubble :deep(h2),
+.bubble :deep(h3) {
+  margin: 8px 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.bubble :deep(p) {
+  margin: 4px 0;
+}
+
+.bubble :deep(code) {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: 'SF Mono', Monaco, Consolas, monospace;
+}
+
+.is-user .bubble :deep(code) {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.bubble :deep(pre) {
+  margin: 6px 0;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+
+.bubble :deep(pre.hljs-code) {
+  background: rgba(0, 0, 0, 0.06);
+  padding: 8px 10px;
+}
+
+.is-user .bubble :deep(pre.hljs-code) {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+.bubble :deep(ul),
+.bubble :deep(ol) {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+
+.bubble :deep(blockquote) {
+  border-left: 3px solid var(--accent, #da7756);
+  margin: 4px 0;
+  padding: 2px 8px;
+  opacity: 0.85;
+}
+
+.bubble :deep(a) {
+  color: var(--accent, #da7756);
+  text-decoration: underline;
 }
 
 .voice-btn {

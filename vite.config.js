@@ -18,5 +18,18 @@ export default defineConfig({
         rewrite: (path) => path.replace(/^\/xiaomi/, '/v1')
       }
     }
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vendor-vue': ['vue', 'vue-router', 'pinia'],
+          'vendor-ui': ['naive-ui'],
+          'vendor-md': ['markdown-it', 'highlight.js'],
+          'vendor-db': ['dexie'],
+          'vendor-utils': ['@vueuse/core']
+        }
+      }
+    }
   }
 })

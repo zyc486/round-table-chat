@@ -1,9 +1,8 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { api } from '../utils/storage.js'
+import { api, saveSetting } from '../utils/db.js'
 
 export const useSettingsStore = defineStore('settings', () => {
-  // 状态
   const settings = ref({
     mode: 'round_robin',
     theme: 'default',
@@ -18,7 +17,6 @@ export const useSettingsStore = defineStore('settings', () => {
   })
   const loading = ref(false)
 
-  // 初始化
   async function init() {
     loading.value = true
     try {
@@ -33,21 +31,18 @@ export const useSettingsStore = defineStore('settings', () => {
     }
   }
 
-  // 保存设置
   async function save() {
     await api.saveSettings(settings.value)
   }
 
-  // 更新单个设置
   async function updateSetting(key, value) {
     settings.value[key] = value
-    await save()
+    await saveSetting(key, value)
   }
 
-  // 更新多个设置
   async function updateSettings(updates) {
     settings.value = { ...settings.value, ...updates }
-    await save()
+    await api.saveSettings(settings.value)
   }
 
   return {

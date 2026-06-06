@@ -74,3 +74,34 @@ input:focus, textarea:focus, select:focus {
 ::selection {
   background: rgba(218, 119, 86, 0.2);
 }
+
+/* 代码高亮主题 (暖色调，匹配 Claude 风格) */
+.hljs-code {
+  background: #1e1e1e !important;
+  color: #d4d4d4;
+  border-radius: 8px;
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.hljs-keyword { color: #c586c0; }
+.hljs-string { color: #ce9178; }
+.hljs-number { color: #b5cea8; }
+.hljs-comment { color: #6a9955; font-style: italic; }
+.hljs-function { color: #dcdcaa; }
+.hljs-title { color: #dcdcaa; }
+.hljs-params { color: #9cdcfe; }
+.hljs-built_in { color: #4ec9b0; }
+.hljs-type { color: #4ec9b0; }
+.hljs-attr { color: #9cdcfe; }
+.hljs-selector-class { color: #d7ba7d; }
+.hljs-selector-tag { color: #569cd6; }
+.hljs-meta { color: #569cd6; }
+.hljs-literal { color: #569cd6; }
+
+/* 粒子动画基础样式（由 particles.js 动态注入 keyframes） */
+.emotion-particle {
+  will-change: transform, opacity;
+}
